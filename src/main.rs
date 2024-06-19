@@ -1,5 +1,4 @@
-use anyhow::{Context, Result};
-use vulkano::VulkanLibrary;
+use anyhow::Result;
 
 mod vk_util;
 mod vk_test;
@@ -15,15 +14,8 @@ fn main() -> Result<()>{
         )
         .init();
 
-    // vulkano setup
-    let library = VulkanLibrary::new()
-        .context("vulkano: no local Vulkan library/DLL")?;
-    let instance = vk_util::macos_instance(library)?;
-    let physical_device = vk_util::any_physical_device(instance)?;
-    let (device, queue) = vk_util::any_graphical_queue_family(physical_device)?;
-
-    // run tests
-    vk_test::s3_buffer_creation(device, queue)?;
+    let ctx = vk_util::TestContext::new()?;
+    vk_test::s3_buffer_creation(ctx.clone())?;
 
     Ok(())
 }

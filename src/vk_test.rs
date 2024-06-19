@@ -1,18 +1,18 @@
-use std::sync::Arc;
 use anyhow::{Context, Result};
 use tracing::info;
+
 use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
 use vulkano::command_buffer::allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo};
-use vulkano::device::{Device, Queue};
-use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter};
 use vulkano::sync::GpuFuture;
 
-pub fn s3_buffer_creation(device: Arc<Device>, queue: Arc<Queue>) -> Result<()> {
-    let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
+use crate::vk_util;
+
+pub fn s3_buffer_creation(ctx: vk_util::TestContext) -> Result<()> {
     let src_content: Vec<i32> = (0..64).collect();
     let src = Buffer::from_iter(
-        memory_allocator.clone(),
+        ctx.memory_allocator(),
         BufferCreateInfo {
             usage: BufferUsage::TRANSFER_SRC,
             ..Default::default()
@@ -27,7 +27,7 @@ pub fn s3_buffer_creation(device: Arc<Device>, queue: Arc<Queue>) -> Result<()> 
 
     let dest_content: Vec<i32> = (0..64).map(|_| 0).collect();
     let dest = Buffer::from_iter(
-        memory_allocator.clone(),
+        ctx.memory_allocator(),
         BufferCreateInfo {
             usage: BufferUsage::TRANSFER_DST,
             ..Default::default()
@@ -41,19 +41,19 @@ pub fn s3_buffer_creation(device: Arc<Device>, queue: Arc<Queue>) -> Result<()> 
     ).context("failed to create destination buffer")?;
 
     let command_buffer_allocator = StandardCommandBufferAllocator::new(
-        device.clone(),
+        ctx.device(),
         StandardCommandBufferAllocatorCreateInfo::default(),
     );
     let mut builder = AutoCommandBufferBuilder::primary(
         &command_buffer_allocator,
-        queue.queue_family_index(),
+        ctx.queue().queue_family_index(),
         CommandBufferUsage::OneTimeSubmit,
     )?;
     builder.copy_buffer(CopyBufferInfo::buffers(src.clone(), dest.clone()))?;
     let command_buffer = builder.build()?;
 
-    vulkano::sync::now(device.clone())
-        .then_execute(queue.clone(), command_buffer)?
+    vulkano::sync::now(ctx.device())
+        .then_execute(ctx.queue(), command_buffer)?
         .then_signal_fence_and_flush()?
         .wait(None)?;
 

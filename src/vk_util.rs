@@ -6,7 +6,32 @@ use tracing::info;
 use vulkano::device::physical::PhysicalDevice;
 use vulkano::device::{Device, DeviceCreateInfo, Queue, QueueCreateInfo, QueueFlags};
 use vulkano::instance::{Instance, InstanceCreateFlags, InstanceCreateInfo};
+use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::VulkanLibrary;
+use crate::vk_util;
+
+#[derive(Clone)]
+pub struct TestContext {
+    device: Arc<Device>,
+    queue: Arc<Queue>,
+    memory_allocator: Arc<StandardMemoryAllocator>,
+}
+
+impl TestContext {
+    pub fn new() -> Result<Self> {
+        let library = VulkanLibrary::new()
+            .context("vulkano: no local Vulkan library/DLL")?;
+        let instance = vk_util::macos_instance(library)?;
+        let physical_device = vk_util::any_physical_device(instance)?;
+        let (device, queue) = vk_util::any_graphical_queue_family(physical_device)?;
+        let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
+        Ok(Self { device, queue, memory_allocator })
+    }
+
+    pub fn device(&self) -> Arc<Device> { self.device.clone() }
+    pub fn queue(&self) -> Arc<Queue> { self.queue.clone() }
+    pub fn memory_allocator(&self) -> Arc<StandardMemoryAllocator> { self.memory_allocator.clone() }
+}
 
 pub fn macos_instance(library: Arc<VulkanLibrary>) -> Result<Arc<Instance>> {
     let instance_create_info = InstanceCreateInfo {
@@ -22,7 +47,6 @@ pub fn any_physical_device(instance: Arc<Instance>) -> anyhow::Result<Arc<Physic
     info!("found {} physical device(s), using first", all_physical_devices.len());
     all_physical_devices.next().context("vulkano: no physical devices available")
 }
-
 pub fn any_graphical_queue_family(physical_device: Arc<PhysicalDevice>) -> Result<(Arc<Device>, Arc<Queue>)> {
     let queue_family_index = physical_device.queue_family_properties()
         .iter().enumerate()
