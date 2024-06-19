@@ -2,9 +2,7 @@ use anyhow::{Context, Result};
 use tracing::info;
 
 use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage};
-use vulkano::command_buffer::allocator::{StandardCommandBufferAllocator, StandardCommandBufferAllocatorCreateInfo};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo};
-use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter};
 use vulkano::pipeline::{ComputePipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo};
@@ -13,7 +11,6 @@ use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
 use vulkano::sync::GpuFuture;
 
 use crate::vk_util;
-use crate::vk_util::TestContext;
 
 pub fn s3_buffer_creation(ctx: vk_util::TestContext) -> Result<()> {
     let src_content: Vec<i32> = (0..64).collect();
@@ -46,12 +43,8 @@ pub fn s3_buffer_creation(ctx: vk_util::TestContext) -> Result<()> {
         dest_content,
     ).context("failed to create destination buffer")?;
 
-    let command_buffer_allocator = StandardCommandBufferAllocator::new(
-        ctx.device(),
-        StandardCommandBufferAllocatorCreateInfo::default(),
-    );
     let mut builder = AutoCommandBufferBuilder::primary(
-        &command_buffer_allocator,
+        &ctx.command_buffer_allocator(),
         ctx.queue().queue_family_index(),
         CommandBufferUsage::OneTimeSubmit,
     )?;
@@ -91,7 +84,7 @@ mod s4_compute_shader {
     }
 }
 
-pub fn s4_compute_operations(ctx: TestContext) -> Result<()> {
+pub fn s4_compute_operations(ctx: vk_util::TestContext) -> Result<()> {
     // create buffers
     let data_iter = 0..65536u32;
     let data_buffer = Buffer::from_iter(
@@ -124,29 +117,22 @@ pub fn s4_compute_operations(ctx: TestContext) -> Result<()> {
     ).context("failed to create compute pipeline")?;
 
     // load descriptor set
-    let descriptor_set_allocator =
-        StandardDescriptorSetAllocator::new(ctx.device(), Default::default());
     let pipeline_layout = compute_pipeline.layout();
     let descriptor_set_layouts = pipeline_layout.set_layouts();
-
     let descriptor_set_layout_index = 0;
     let descriptor_set_layout = descriptor_set_layouts
         .get(descriptor_set_layout_index)
         .context("no descriptor sets found in shader")?;
-    let descriptor_set = PersistentDescriptorSet::new(
-        &descriptor_set_allocator,
+    let set = PersistentDescriptorSet::new(
+        &ctx.descriptor_set_allocator(),
         descriptor_set_layout.clone(),
-        [WriteDescriptorSet::buffer(0, data_buffer.clone())], // 0 is the binding
+        [WriteDescriptorSet::buffer(0, data_buffer.clone())],
         [],
     )?;
 
     // create command buffer
-    let command_buffer_allocator = StandardCommandBufferAllocator::new(
-        ctx.device(),
-        StandardCommandBufferAllocatorCreateInfo::default(),
-    );
     let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
-        &command_buffer_allocator,
+        &ctx.command_buffer_allocator(),
         ctx.queue().queue_family_index(),
         CommandBufferUsage::OneTimeSubmit,
     )?;
@@ -157,7 +143,7 @@ pub fn s4_compute_operations(ctx: TestContext) -> Result<()> {
             PipelineBindPoint::Compute,
             compute_pipeline.layout().clone(),
             descriptor_set_layout_index as u32,
-            descriptor_set,
+            set,
         )?
         .dispatch(work_group_counts)?;
     let command_buffer = command_buffer_builder.build()?;
