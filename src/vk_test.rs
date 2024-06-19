@@ -71,7 +71,7 @@ pub fn s3_buffer_creation(ctx: vk_util::TestContext) -> Result<()> {
     Ok(())
 }
 
-mod cs {
+mod s4_compute_shader {
     vulkano_shaders::shader!{
         ty: "compute",
         src: r"
@@ -109,8 +109,8 @@ pub fn s4_compute_operations(ctx: TestContext) -> Result<()> {
     ).context("failed to create buffer")?;
 
     // load shader and compute pipeline
-    let shader = cs::load(ctx.device()).context("failed to create shader module")?;
-    let cs = shader.entry_point("main").context("did not find sahder entry point")?;
+    let shader = s4_compute_shader::load(ctx.device()).context("failed to create shader module")?;
+    let cs = shader.entry_point("main").context("did not find shader entry point")?;
     let stage = PipelineShaderStageCreateInfo::new(cs);
     let layout = PipelineLayout::new(
         ctx.device(),
