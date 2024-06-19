@@ -16,6 +16,7 @@ fn main() -> Result<()>{
 
     let ctx = vk_util::TestContext::new()?;
     vk_test::s3_buffer_creation(ctx.clone())?;
+    vk_test::s4_compute_operations(ctx.clone())?;
 
     Ok(())
 }
