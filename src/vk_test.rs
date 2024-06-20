@@ -201,7 +201,7 @@ mod s5_compute_shader {
 }
 
 pub fn s5_image_creation(ctx: vk_util::TestContext) -> Result<()> {
-    // create image and buffer
+    // create image and destination buffer (to copy the image into)
     let image = Image::new(
         ctx.memory_allocator(),
         ImageCreateInfo {
@@ -217,31 +217,6 @@ pub fn s5_image_creation(ctx: vk_util::TestContext) -> Result<()> {
         },
     )?;
     let view = ImageView::new_default(image.clone())?;
-    let shader = s5_compute_shader::load(ctx.device()).context("failed to create shader module")?;
-    let cs = shader.entry_point("main").context("did not find shader entry point")?;
-    let stage = PipelineShaderStageCreateInfo::new(cs);
-    let pipeline_layout = PipelineLayout::new(
-        ctx.device(),
-        PipelineDescriptorSetLayoutCreateInfo::from_stages([&stage])
-            .into_pipeline_layout_create_info(ctx.device())?
-    )?;
-    let compute_pipeline = ComputePipeline::new(
-        ctx.device(),
-        /* cache= */ None,
-        ComputePipelineCreateInfo::stage_layout(stage.clone(), pipeline_layout),
-    ).context("failed to create compute pipeline")?;
-    let pipeline_layout = compute_pipeline.layout();
-    let descriptor_set_layouts = pipeline_layout.set_layouts();
-    let descriptor_set_layout_index = 0;
-    let descriptor_set_layout = descriptor_set_layouts
-        .get(descriptor_set_layout_index)
-        .context("no descriptor sets found in shader")?;
-    let set = PersistentDescriptorSet::new(
-        &ctx.descriptor_set_allocator(),
-        descriptor_set_layout.clone(),
-        [WriteDescriptorSet::image_view(0, view.clone())],
-        [],
-    )?;
 
     let buf = Buffer::from_iter(
         ctx.memory_allocator(),
@@ -256,6 +231,35 @@ pub fn s5_image_creation(ctx: vk_util::TestContext) -> Result<()> {
         },
         (0..1024 * 1024 * 4).map(|_| 0u8),
     ).context("failed to create buffer")?;
+
+    // load shader and compute pipeline
+    let shader = s5_compute_shader::load(ctx.device()).context("failed to create shader module")?;
+    let cs = shader.entry_point("main").context("did not find shader entry point")?;
+    let stage = PipelineShaderStageCreateInfo::new(cs);
+    let pipeline_layout = PipelineLayout::new(
+        ctx.device(),
+        PipelineDescriptorSetLayoutCreateInfo::from_stages([&stage])
+            .into_pipeline_layout_create_info(ctx.device())?
+    )?;
+    let compute_pipeline = ComputePipeline::new(
+        ctx.device(),
+        /* cache= */ None,
+        ComputePipelineCreateInfo::stage_layout(stage.clone(), pipeline_layout),
+    ).context("failed to create compute pipeline")?;
+    let pipeline_layout = compute_pipeline.layout();
+
+    // load descriptor set
+    let descriptor_set_layouts = pipeline_layout.set_layouts();
+    let descriptor_set_layout_index = 0;
+    let descriptor_set_layout = descriptor_set_layouts
+        .get(descriptor_set_layout_index)
+        .context("no descriptor sets found in shader")?;
+    let set = PersistentDescriptorSet::new(
+        &ctx.descriptor_set_allocator(),
+        descriptor_set_layout.clone(),
+        [WriteDescriptorSet::image_view(0, view.clone())],
+        [],
+    )?;
 
     // create command buffer
     let mut builder = AutoCommandBufferBuilder::primary(
