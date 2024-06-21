@@ -17,7 +17,7 @@ fn main() -> Result<()>{
         .init();
 
     let window_ctx = vk_util::WindowContext::new()?;
-    let ctx = vk_util::TestContext::new(&window_ctx)?;
+    let ctx = vk_util::VulkanoContext::new(&window_ctx)?;
     vk_test::s3_buffer_creation(ctx.clone())?;
     vk_test::s4_compute_operations(ctx.clone())?;
     vk_test::s5_image_creation(ctx.clone())?;

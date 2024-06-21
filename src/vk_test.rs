@@ -3,8 +3,7 @@ use anyhow::{Context, Result};
 use tracing::info;
 
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, CopyImageToBufferInfo, PrimaryAutoCommandBuffer, RenderPassBeginInfo, SubpassBeginInfo, SubpassContents, SubpassEndInfo};
-use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, CopyImageToBufferInfo, RenderPassBeginInfo, SubpassBeginInfo, SubpassContents, SubpassEndInfo};
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::image::view::ImageView;
@@ -21,16 +20,13 @@ use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, Subpass};
 use vulkano::shader::ShaderModule;
-use vulkano::{swapchain, Validated, VulkanError};
-use vulkano::swapchain::SwapchainPresentInfo;
-use vulkano::sync::future::FenceSignalFuture;
 use vulkano::sync::GpuFuture;
-use winit::event::{Event, WindowEvent};
-use winit::event_loop::ControlFlow;
+use winit::window::Window;
 
 use crate::vk_util;
+use crate::vk_util::{CommandBuffer, VulkanoContext};
 
-pub fn s3_buffer_creation(ctx: vk_util::TestContext) -> Result<()> {
+pub fn s3_buffer_creation(ctx: vk_util::VulkanoContext) -> Result<()> {
     let src_content: Vec<i32> = (0..64).collect();
     let src = Buffer::from_iter(
         ctx.memory_allocator(),
@@ -102,7 +98,7 @@ mod s4_compute_shader {
     }
 }
 
-pub fn s4_compute_operations(ctx: vk_util::TestContext) -> Result<()> {
+pub fn s4_compute_operations(ctx: vk_util::VulkanoContext) -> Result<()> {
     // create buffers
     let data_iter = 0..65536u32;
     let data_buffer = Buffer::from_iter(
@@ -215,7 +211,7 @@ mod s5_compute_shader {
     }
 }
 
-pub fn s5_image_creation(ctx: vk_util::TestContext) -> Result<()> {
+pub fn s5_image_creation(ctx: vk_util::VulkanoContext) -> Result<()> {
     // create image and destination buffer (to copy the image into)
     let image = Image::new(
         ctx.memory_allocator(),
@@ -352,7 +348,7 @@ mod s6_fragment_shader {
         ",
     }
 }
-pub fn s6_graphics_pipeline(ctx: vk_util::TestContext) -> Result<()> {
+pub fn s6_graphics_pipeline(ctx: vk_util::VulkanoContext) -> Result<()> {
     // create vertex buffer
     let vertex1 = MyVertex { position: [-0.5, -0.5] };
     let vertex2 = MyVertex { position: [ 0.0,  0.5] };
@@ -520,7 +516,7 @@ pub fn s6_graphics_pipeline(ctx: vk_util::TestContext) -> Result<()> {
     Ok(())
 }
 
-fn s7_create_pipeline(ctx: &vk_util::TestContext,
+fn s7_create_pipeline(ctx: &vk_util::VulkanoContext,
                       vs: Arc<ShaderModule>,
                       fs: Arc<ShaderModule>,
                       viewport: Viewport) -> Result<Arc<GraphicsPipeline>> {
@@ -565,10 +561,10 @@ fn s7_create_pipeline(ctx: &vk_util::TestContext,
     )?)
 }
 
-fn s7_create_command_buffers(ctx: &vk_util::TestContext,
+fn s7_create_command_buffers(ctx: &vk_util::VulkanoContext,
                              pipeline: Arc<GraphicsPipeline>,
                              vertex_buffer: &Subbuffer<[MyVertex]>)
-        -> Result<Vec<Arc<PrimaryAutoCommandBuffer<Arc<StandardCommandBufferAllocator>>>>> {
+                             -> Result<Vec<Arc<vk_util::CommandBuffer>>> {
     Ok(ctx.framebuffers()
         .iter()
         .map(|framebuffer| {
@@ -596,122 +592,59 @@ fn s7_create_command_buffers(ctx: &vk_util::TestContext,
         }).try_collect()?)
 }
 
-pub fn s7_windowing(window_ctx: vk_util::WindowContext, mut ctx: vk_util::TestContext) -> Result<()> {
-    let (event_loop, window) = window_ctx.consume();
+struct S7Handler {
+    vs: Arc<ShaderModule>,
+    fs: Arc<ShaderModule>,
+    vertex_buffer: Subbuffer<[MyVertex]>,
+    viewport: Viewport,
+    command_buffers: Vec<Arc<CommandBuffer>>,
+}
 
-    // create vertex buffer
+impl S7Handler {
+    fn new(vs: Arc<ShaderModule>,
+           fs: Arc<ShaderModule>,
+           vertex_buffer: Subbuffer<[MyVertex]>,
+           viewport: Viewport,
+           command_buffers: Vec<Arc<CommandBuffer>>) -> Self {
+        Self { vs, fs, vertex_buffer, viewport, command_buffers }
+    }
+}
+
+pub fn s7_windowing(window_ctx: vk_util::WindowContext, ctx: vk_util::VulkanoContext) -> Result<()> {
     let vertex1 = MyVertex { position: [-0.5, -0.5] };
     let vertex2 = MyVertex { position: [ 0.0,  0.5] };
     let vertex3 = MyVertex { position: [ 0.5, -0.25] };
     let vertex_buffer = Buffer::from_iter(
         ctx.memory_allocator(),
-        BufferCreateInfo {
-            usage: BufferUsage::VERTEX_BUFFER,
-            ..Default::default()
-        },
+        BufferCreateInfo { usage: BufferUsage::VERTEX_BUFFER, ..Default::default() },
         AllocationCreateInfo {
             memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-            ..Default::default()
+                | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE, ..Default::default()
         },
         vec![vertex1, vertex2, vertex3],
     )?;
 
-    // load shaders
+    let viewport = window_ctx.create_default_viewport();
     let vs = s6_vertex_shader::load(ctx.device()).context("failed to create shader module")?;
     let fs = s6_fragment_shader::load(ctx.device()).context("failed to create shader module")?;
+    let command_buffers = s7_create_pipeline(&ctx, vs.clone(), fs.clone(), viewport.clone())
+        .and_then(|pipeline| s7_create_command_buffers(&ctx, pipeline, &vertex_buffer))?;
+    let handler = S7Handler::new(vs, fs, vertex_buffer, viewport, command_buffers);
 
-    let mut viewport = Viewport {
-        offset: [0.0, 0.0],
-        extent: window.inner_size().into(),
-        depth_range: 0.0..=1.0,
-    };
+    let (event_loop, window) = window_ctx.consume();
+    vk_util::WindowEventHandler::new(window, ctx, handler).run(event_loop);
+    Ok(())
+}
 
-    let pipeline = s7_create_pipeline(&ctx, vs.clone(), fs.clone(), viewport.clone())?;
-    let mut command_buffers = s7_create_command_buffers(&ctx, pipeline, &vertex_buffer)?;
-    let frames_in_flight = ctx.images().len();
-    // XXX: FenceSignalFuture is not Send + Sync, so Arc is cheating. However, there is no
-    // `impl GpuFuture for Rc<FenceSignalFuture<...>>`, so we can't use Rc. We don't use threads yet
-    // so this is safe anyway.
-    let mut fences: Vec<Option<Arc<FenceSignalFuture<_>>>> = vec![None; frames_in_flight];
-    let mut previous_fence_i = 0;
+impl vk_util::RenderEventHandler for S7Handler {
+    fn on_resize(&mut self, ctx: &VulkanoContext, window: Arc<Window>) -> Result<()> {
+        self.viewport.extent = window.inner_size().into();
+        self.command_buffers = s7_create_pipeline(ctx, self.vs.clone(), self.fs.clone(), self.viewport.clone())
+            .and_then(|pipeline| s7_create_command_buffers(ctx, pipeline, &self.vertex_buffer))?;
+        Ok(())
+    }
 
-    let mut window_resized = false;
-    let mut recreate_swapchain = false;
-    event_loop.run(move |event, _, control_flow| {
-        match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => {
-                *control_flow = ControlFlow::Exit;
-            },
-            Event::WindowEvent {
-                event: WindowEvent::Resized(_),
-                ..
-            } => {
-                window_resized = true;
-            },
-            Event::MainEventsCleared => {
-                if window_resized || recreate_swapchain {
-                    recreate_swapchain = false;
-                    ctx.recreate_swapchain(window.clone()).expect("could not recreate swapchain");
-                }
-                if window_resized {
-                    window_resized = false;
-                    viewport.extent = window.inner_size().into();
-                    command_buffers = s7_create_pipeline(&ctx, vs.clone(), fs.clone(), viewport.clone())
-                        .and_then(|new_pipeline| {
-                            s7_create_command_buffers(&ctx, new_pipeline, &vertex_buffer)
-                        }).expect("failed to recreate command buffers after resize");
-                }
-                let (image_i, suboptimal, acquire_future) =
-                    match swapchain::acquire_next_image(ctx.swapchain(), None)
-                            .map_err(Validated::unwrap) {
-                        Ok(r) => r,
-                        Err(VulkanError::OutOfDate) => {
-                            recreate_swapchain = true;
-                            return;
-                        }
-                        Err(e) => panic!("failed to acquire next image: {e}"),
-                    };
-                if suboptimal {
-                    recreate_swapchain = true;
-                }
-                if let Some(image_fence) = &fences[image_i as usize] {
-                    image_fence.wait(None).unwrap();
-                }
-                let previous_future = match fences[previous_fence_i as usize].clone() {
-                    None => {
-                        let mut now = vulkano::sync::now(ctx.device());
-                        now.cleanup_finished();
-                        now.boxed()
-                    }
-                    Some(fence) => fence.boxed(),
-                };
-                let future = previous_future
-                    .join(acquire_future)
-                    .then_execute(ctx.queue(), command_buffers[image_i as usize].clone())
-                    .unwrap()
-                    .then_swapchain_present(
-                        ctx.queue(),
-                        SwapchainPresentInfo::swapchain_image_index(ctx.swapchain(), image_i),
-                    )
-                    .then_signal_fence_and_flush();
-                fences[image_i as usize] = match future.map_err(Validated::unwrap) {
-                    Ok(value) => Some(Arc::new(value)),
-                    Err(VulkanError::OutOfDate) => {
-                        recreate_swapchain = true;
-                        None
-                    }
-                    Err(e) => {
-                        println!("failed to flush future: {e}");
-                        None
-                    }
-                };
-                previous_fence_i = image_i;
-            },
-            _ => (),
-        }
-    });
+    fn on_render(&mut self) -> Result<Vec<Arc<CommandBuffer>>> {
+        Ok(self.command_buffers.clone())
+    }
 }
