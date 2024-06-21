@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use tracing::info;
 
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, CopyImageToBufferInfo, RenderPassBeginInfo, SubpassBeginInfo, SubpassContents, SubpassEndInfo};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, CopyImageToBufferInfo, PrimaryAutoCommandBuffer, RenderPassBeginInfo, SubpassBeginInfo, SubpassContents, SubpassEndInfo};
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::image::view::ImageView;
@@ -24,7 +24,7 @@ use vulkano::sync::GpuFuture;
 use winit::window::Window;
 
 use crate::vk_util;
-use crate::vk_util::{CommandBuffer, VulkanoContext};
+use crate::vk_util::VulkanoContext;
 
 pub fn s3_buffer_creation(ctx: vk_util::VulkanoContext) -> Result<()> {
     let src_content: Vec<i32> = (0..64).collect();
@@ -58,7 +58,7 @@ pub fn s3_buffer_creation(ctx: vk_util::VulkanoContext) -> Result<()> {
     ).context("failed to create destination buffer")?;
 
     let mut builder = AutoCommandBufferBuilder::primary(
-        &ctx.command_buffer_allocator(),
+        ctx.command_buffer_allocator(),
         ctx.queue().queue_family_index(),
         CommandBufferUsage::OneTimeSubmit,
     )?;
@@ -146,7 +146,7 @@ pub fn s4_compute_operations(ctx: vk_util::VulkanoContext) -> Result<()> {
 
     // create command buffer
     let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
-        &ctx.command_buffer_allocator(),
+        ctx.command_buffer_allocator(),
         ctx.queue().queue_family_index(),
         CommandBufferUsage::OneTimeSubmit,
     )?;
@@ -274,7 +274,7 @@ pub fn s5_image_creation(ctx: vk_util::VulkanoContext) -> Result<()> {
 
     // create command buffer
     let mut builder = AutoCommandBufferBuilder::primary(
-        &ctx.command_buffer_allocator(),
+        ctx.command_buffer_allocator(),
         ctx.queue().queue_family_index(),
         CommandBufferUsage::OneTimeSubmit,
     )?;
@@ -477,7 +477,7 @@ pub fn s6_graphics_pipeline(ctx: vk_util::VulkanoContext) -> Result<()> {
 
     // create command buffer
     let mut builder = AutoCommandBufferBuilder::primary(
-        &ctx.command_buffer_allocator(),
+        ctx.command_buffer_allocator(),
         ctx.queue().queue_family_index(),
         CommandBufferUsage::OneTimeSubmit,
     )?;
@@ -564,26 +564,25 @@ fn s7_create_pipeline(ctx: &vk_util::VulkanoContext,
 fn s7_create_command_buffers(ctx: &vk_util::VulkanoContext,
                              pipeline: Arc<GraphicsPipeline>,
                              vertex_buffer: &Subbuffer<[MyVertex]>)
-                             -> Result<Vec<Arc<vk_util::CommandBuffer>>> {
+                             -> Result<Vec<Arc<PrimaryAutoCommandBuffer>>> {
     Ok(ctx.framebuffers()
         .iter()
         .map(|framebuffer| {
             let mut builder = AutoCommandBufferBuilder::primary(
-                &ctx.command_buffer_allocator(),
+                ctx.command_buffer_allocator(),
                 ctx.queue().queue_family_index(),
                 CommandBufferUsage::MultipleSubmit,
             )?;
 
             builder.begin_render_pass(
-                RenderPassBeginInfo {
-                    clear_values: vec![Some([0.1, 0.1, 0.1, 1.0].into())],
-                    ..RenderPassBeginInfo::framebuffer(framebuffer.clone())
-                },
-                SubpassBeginInfo {
-                    contents: SubpassContents::Inline,
-                    ..Default::default()
-                },
-            )?
+                    RenderPassBeginInfo {
+                        clear_values: vec![Some([0.1, 0.1, 0.1, 1.0].into())],
+                        ..RenderPassBeginInfo::framebuffer(framebuffer.clone())
+                    },
+                    SubpassBeginInfo {
+                        contents: SubpassContents::Inline,
+                        ..Default::default()
+                    })?
                 .bind_pipeline_graphics(pipeline.clone())?
                 .bind_vertex_buffers(0, vertex_buffer.clone())?
                 .draw(vertex_buffer.len() as u32, 1, 0, 0)?
@@ -597,7 +596,7 @@ struct S7Handler {
     fs: Arc<ShaderModule>,
     vertex_buffer: Subbuffer<[MyVertex]>,
     viewport: Viewport,
-    command_buffers: Vec<Arc<CommandBuffer>>,
+    command_buffers: Vec<Arc<PrimaryAutoCommandBuffer>>,
 }
 
 impl S7Handler {
@@ -605,7 +604,7 @@ impl S7Handler {
            fs: Arc<ShaderModule>,
            vertex_buffer: Subbuffer<[MyVertex]>,
            viewport: Viewport,
-           command_buffers: Vec<Arc<CommandBuffer>>) -> Self {
+           command_buffers: Vec<Arc<PrimaryAutoCommandBuffer>>) -> Self {
         Self { vs, fs, vertex_buffer, viewport, command_buffers }
     }
 }
@@ -644,7 +643,7 @@ impl vk_util::RenderEventHandler for S7Handler {
         Ok(())
     }
 
-    fn on_render(&mut self) -> Result<Vec<Arc<CommandBuffer>>> {
+    fn on_render(&mut self) -> Result<Vec<Arc<PrimaryAutoCommandBuffer>>> {
         Ok(self.command_buffers.clone())
     }
 }

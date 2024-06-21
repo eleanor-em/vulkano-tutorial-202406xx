@@ -98,7 +98,7 @@ impl VulkanoContext {
     pub fn device(&self) -> Arc<Device> { self.device.clone() }
     pub fn queue(&self) -> Arc<Queue> { self.queue.clone() }
     pub fn memory_allocator(&self) -> Arc<StandardMemoryAllocator> { self.memory_allocator.clone() }
-    pub fn command_buffer_allocator(&self) -> Arc<StandardCommandBufferAllocator> { self.command_buffer_allocator.clone() }
+    pub fn command_buffer_allocator(&self) -> &StandardCommandBufferAllocator { &self.command_buffer_allocator }
     pub fn descriptor_set_allocator(&self) -> Arc<StandardDescriptorSetAllocator> { self.descriptor_set_allocator.clone() }
     pub fn surface(&self) -> Arc<Surface> { self.surface.clone() }
     pub fn swapchain(&self) -> Arc<Swapchain> { self.swapchain.clone() }
@@ -223,11 +223,9 @@ fn create_framebuffers(images: &[Arc<Image>], render_pass: Arc<RenderPass>) -> R
         }).try_collect()?)
 }
 
-pub type CommandBuffer = PrimaryAutoCommandBuffer<Arc<StandardCommandBufferAllocator>>;
-
 pub trait RenderEventHandler {
     fn on_resize(&mut self, ctx: &VulkanoContext, window: Arc<Window>) -> Result<()>;
-    fn on_render(&mut self) ->  Result<Vec<Arc<CommandBuffer>>>;
+    fn on_render(&mut self) ->  Result<Vec<Arc<PrimaryAutoCommandBuffer>>>;
 }
 
 pub struct WindowEventHandler<RenderHandler: RenderEventHandler> {
