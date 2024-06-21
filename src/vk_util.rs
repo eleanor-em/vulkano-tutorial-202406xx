@@ -238,11 +238,12 @@ pub struct WindowEventHandler<RenderHandler: RenderEventHandler> {
     // XXX: FenceSignalFuture is not Send + Sync, so Arc is cheating. However, there is no
     // `impl GpuFuture for Rc<FenceSignalFuture<...>>`, so we can't use Rc. We don't use threads yet
     // so this is safe anyway.
-    fences: Vec<Option<Arc<FenceSignalFuture<FenceFuture>>>>,
+    fences: Vec<Option<Arc<FenceFuture>>>,
     last_fence_idx: u32,
 }
 
-type FenceFuture = PresentFuture<CommandBufferExecFuture<JoinFuture<Box<dyn GpuFuture>, SwapchainAcquireFuture>>>;
+type SwapchainFuturePair = JoinFuture<Box<dyn GpuFuture>, SwapchainAcquireFuture>;
+type FenceFuture = FenceSignalFuture<PresentFuture<CommandBufferExecFuture<SwapchainFuturePair>>>;
 impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandler> {
     pub fn new(window: Arc<Window>,
                ctx: VulkanoContext,
@@ -287,23 +288,25 @@ impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandl
         };
 
         let command_buffers = self.render_handler.on_render()?;
-        let future = previous_future.join(acquire_future)
+        self.fences[image_idx as usize] = previous_future.join(acquire_future)
             .then_execute(self.ctx.queue(), command_buffers[image_idx as usize].clone())?
             .then_swapchain_present(
                 self.ctx.queue(),
-                SwapchainPresentInfo::swapchain_image_index(self.ctx.swapchain(), image_idx),
+                SwapchainPresentInfo::swapchain_image_index(self.ctx.swapchain(), image_idx)
             )
             .then_signal_fence_and_flush()
-            .map_err(Validated::unwrap);
-
-        self.fences[image_idx as usize] = match future {
-            Ok(value) => Some(Arc::new(value)),
-            Err(VulkanError::OutOfDate) => {
-                self.should_recreate_swapchain = true;
-                None
-            },
-            Err(e) => return Err(e.into()),
-        };
+            .map_err(Validated::unwrap)
+            .map(|value| {
+                // XXX: why is this type so complicated, anyway?
+                Some(Arc::new(value))
+            })
+            .or_else(|e| match e {
+                VulkanError::OutOfDate => {
+                    self.should_recreate_swapchain = true;
+                    Ok(None)
+                },
+                _ => Err(e),
+            })?;
         self.last_fence_idx = image_idx;
         Ok(())
     }
