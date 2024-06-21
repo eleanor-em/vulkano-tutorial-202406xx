@@ -1,4 +1,5 @@
-use std::time::Duration;
+#![feature(iterator_try_collect)]
+
 use anyhow::Result;
 
 mod vk_util;
@@ -15,13 +16,11 @@ fn main() -> Result<()>{
         )
         .init();
 
-    let ctx = vk_util::TestContext::new()?;
+    let window_ctx = vk_util::WindowContext::new()?;
+    let ctx = vk_util::TestContext::new(&window_ctx)?;
     vk_test::s3_buffer_creation(ctx.clone())?;
     vk_test::s4_compute_operations(ctx.clone())?;
     vk_test::s5_image_creation(ctx.clone())?;
     vk_test::s6_graphics_pipeline(ctx.clone())?;
-
-    // give everything time to stabilise as needed (e.g. to open images from tests)
-    std::thread::sleep(Duration::from_millis(100));
-    Ok(())
+    vk_test::s7_windowing(window_ctx, ctx.clone())
 }
