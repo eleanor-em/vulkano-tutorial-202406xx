@@ -228,10 +228,11 @@ pub trait RenderEventHandler {
     fn on_render(&mut self) ->  Result<Vec<Arc<PrimaryAutoCommandBuffer>>>;
 }
 
-type FenceFuture = FenceSignalFuture<PresentFuture<CommandBufferExecFuture<JoinFuture<
+type SwapchainJoinFuture = JoinFuture<
     Box<dyn GpuFuture>,
-    SwapchainAcquireFuture>,
->>>;
+    SwapchainAcquireFuture
+>;
+type FenceFuture = FenceSignalFuture<PresentFuture<CommandBufferExecFuture<SwapchainJoinFuture>>>;
 
 pub struct WindowEventHandler<RenderHandler: RenderEventHandler> {
     window: Arc<Window>,
@@ -273,18 +274,22 @@ impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandl
         Ok(())
     }
 
-    fn idle(&mut self, image_idx: usize, acquire_future: SwapchainAcquireFuture) -> Result<()> {
+    fn acquire_and_synchronise(&self, image_idx: usize, acquire_future: SwapchainAcquireFuture)
+            -> Result<SwapchainJoinFuture> {
         if let Some(image_fence) = &self.fences[image_idx] {
             image_fence.wait(None)?;
         }
-        let next_future = self.fences[self.last_fence_idx].clone()
+        Ok(self.fences[self.last_fence_idx].clone()
             .map(GpuFuture::boxed)
             .unwrap_or(
                 // Synchronise only if there is no previous future (swapchain was just created).
                 vulkano::sync::now(self.ctx.device()).boxed())
-            .join(acquire_future);
+            .join(acquire_future))
+    }
+
+    fn idle(&mut self, image_idx: usize, acquire_future: SwapchainAcquireFuture) -> Result<()> {
         let command_buffers = self.render_handler.on_render()?;
-        self.fences[image_idx] = next_future
+        self.fences[image_idx] = self.acquire_and_synchronise(image_idx, acquire_future)?
             .then_execute(self.ctx.queue(), command_buffers[image_idx].clone())?
             .then_swapchain_present(
                 self.ctx.queue(),
