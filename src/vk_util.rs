@@ -241,7 +241,7 @@ pub struct WindowEventHandler<RenderHandler: RenderEventHandler> {
     window_was_resized: bool,
     should_recreate_swapchain: bool,
     fences: Vec<Option<Arc<FenceFuture>>>,
-    last_fence_idx: u32,
+    last_fence_idx: usize,
 }
 impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandler> {
     pub fn new(window: Arc<Window>,
@@ -273,22 +273,22 @@ impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandl
         Ok(())
     }
 
-    fn handle_acquired_image(&mut self, image_idx: u32, acquire_future: SwapchainAcquireFuture) -> Result<()> {
-        if let Some(image_fence) = &self.fences[image_idx as usize] {
+    fn idle(&mut self, image_idx: usize, acquire_future: SwapchainAcquireFuture) -> Result<()> {
+        if let Some(image_fence) = &self.fences[image_idx] {
             image_fence.wait(None)?;
         }
-        let next_future = self.fences[self.last_fence_idx as usize].clone()
+        let next_future = self.fences[self.last_fence_idx].clone()
             .map(GpuFuture::boxed)
             .unwrap_or(
                 // Synchronise only if there is no previous future (swapchain was just created).
                 vulkano::sync::now(self.ctx.device()).boxed())
             .join(acquire_future);
         let command_buffers = self.render_handler.on_render()?;
-        self.fences[image_idx as usize] = next_future
-            .then_execute(self.ctx.queue(), command_buffers[image_idx as usize].clone())?
+        self.fences[image_idx] = next_future
+            .then_execute(self.ctx.queue(), command_buffers[image_idx].clone())?
             .then_swapchain_present(
                 self.ctx.queue(),
-                SwapchainPresentInfo::swapchain_image_index(self.ctx.swapchain(), image_idx)
+                SwapchainPresentInfo::swapchain_image_index(self.ctx.swapchain(), image_idx as u32)
             )
             .then_signal_fence_and_flush()
             .map_err(Validated::unwrap)
@@ -297,7 +297,7 @@ impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandl
                 VulkanError::OutOfDate => { self.should_recreate_swapchain = true; Ok(None) },
                 _ => Err(e),
             })?;
-        let expected_image_idx = (self.last_fence_idx + 1) % self.ctx.images().len() as u32;
+        let expected_image_idx = (self.last_fence_idx + 1) % self.ctx.images().len();
         if image_idx > 0 && image_idx != expected_image_idx {
             info!("out-of-order framebuffer: {} -> {}", self.last_fence_idx, image_idx);
         }
@@ -324,7 +324,7 @@ impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandl
                 match swapchain::acquire_next_image(self.ctx.swapchain(), None).map_err(Validated::unwrap) {
                     Ok((image_idx, suboptimal, acquire_future)) => {
                         if suboptimal { self.should_recreate_swapchain = true; }
-                        self.handle_acquired_image(image_idx, acquire_future)
+                        self.idle(image_idx as usize, acquire_future)
                     },
                     Err(VulkanError::OutOfDate) => {
                         self.should_recreate_swapchain = true;
