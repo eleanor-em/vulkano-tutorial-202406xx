@@ -45,7 +45,7 @@ fn main() -> Result<()>{
 }
 
 // This is the "main" test (i.e. used for active dev).
-#[derive(BufferContents, Vertex)]
+#[derive(BufferContents, Vertex, Clone, Copy)]
 #[repr(C)]
 struct S7Vertex {
     #[format(R32G32_SFLOAT)]
@@ -111,6 +111,8 @@ struct S7Handler {
     vertex_buffer: Subbuffer<[S7Vertex]>,
     viewport: Viewport,
     command_buffers: Vec<Arc<PrimaryAutoCommandBuffer>>,
+    top_left: [f32; 2],
+    t: usize,
 }
 
 impl S7Handler {
@@ -119,22 +121,52 @@ impl S7Handler {
            vertex_buffer: Subbuffer<[S7Vertex]>,
            viewport: Viewport,
            command_buffers: Vec<Arc<PrimaryAutoCommandBuffer>>) -> Self {
-        Self { vs, fs, vertex_buffer, viewport, command_buffers }
+        Self {
+            vs, fs, vertex_buffer, viewport, command_buffers,
+            top_left: [-0.5, -0.5],
+            t: 0,
+        }
+    }
+
+    fn recreate_command_buffers(&mut self, ctx: &VulkanoContext) -> Result<()> {
+        self.command_buffers = s7_create_pipeline(ctx, self.vs.clone(), self.fs.clone(), self.viewport.clone())
+            .and_then(|pipeline| s7_create_command_buffers(ctx, pipeline, &self.vertex_buffer))?;
+        Ok(())
     }
 }
 impl vk_util::RenderEventHandler for S7Handler {
     fn on_resize(&mut self, ctx: &VulkanoContext, window: Arc<Window>) -> Result<()> {
         self.viewport.extent = window.inner_size().into();
-        self.command_buffers = s7_create_pipeline(ctx, self.vs.clone(), self.fs.clone(), self.viewport.clone())
-            .and_then(|pipeline| s7_create_command_buffers(ctx, pipeline, &self.vertex_buffer))?;
+        self.recreate_command_buffers(ctx)?;
         Ok(())
     }
 
-    fn on_render(&mut self) -> Result<Vec<Arc<PrimaryAutoCommandBuffer>>> {
+    fn on_update(&mut self, ctx: &vk_util::VulkanoContext) -> Result<()> {
+        self.t = (self.t + 1) % 62831853;
+        let arc = f32::sin(self.t as f32 / PERIOD);
+        const PERIOD: f32 = 100.0;
+        let next_vertices = [
+            S7Vertex { position: [self.top_left[0] + arc, self.top_left[1] + arc] },
+            S7Vertex { position: [self.top_left[0] + 0.5 - arc, self.top_left[1] + 1.0 + arc] },
+            S7Vertex { position: [self.top_left[0] + 1.0 - arc, self.top_left[1] + 0.25 + arc] },
+        ];
+        self.vertex_buffer = Buffer::from_iter(
+            ctx.memory_allocator(),
+            BufferCreateInfo { usage: BufferUsage::VERTEX_BUFFER, ..Default::default() },
+            AllocationCreateInfo {
+                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE, ..Default::default()
+            },
+            next_vertices,
+        )?;
+        self.recreate_command_buffers(ctx)?;
+        Ok(())
+    }
+
+    fn on_render(&mut self, _ctx: &vk_util::VulkanoContext) -> Result<Vec<Arc<PrimaryAutoCommandBuffer>>> {
         Ok(self.command_buffers.clone())
     }
 }
-
 
 fn s7_create_pipeline(ctx: &vk_util::VulkanoContext,
                       vs: Arc<ShaderModule>,

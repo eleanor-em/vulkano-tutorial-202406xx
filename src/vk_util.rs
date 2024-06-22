@@ -228,8 +228,9 @@ fn create_framebuffers(images: &[Arc<Image>],
 
 pub trait RenderEventHandler {
     fn on_resize(&mut self, ctx: &VulkanoContext, window: Arc<Window>) -> Result<()>;
+    fn on_update(&mut self, ctx: &VulkanoContext) -> Result<()>;
     // TODO: find some way to genericise `PrimaryAutoCommandBuffer`. It gets weird fast.
-    fn on_render(&mut self) -> Result<Vec<Arc<PrimaryAutoCommandBuffer>>>;
+    fn on_render(&mut self, ctx: &VulkanoContext) -> Result<Vec<Arc<PrimaryAutoCommandBuffer>>>;
 }
 
 type SwapchainJoinFuture = JoinFuture<
@@ -313,7 +314,7 @@ impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandl
 
     fn idle(&mut self, image_idx: usize, acquire_future: SwapchainAcquireFuture) -> Result<()> {
         let ready_future = self.acquire_and_synchronise(image_idx, acquire_future)?;
-        let command_buffers = self.render_handler.on_render()?;
+        let command_buffers = self.render_handler.on_render(&self.ctx)?;
         self.submit_command_buffers(image_idx, command_buffers, ready_future)?;
 
         let expected_image_idx = (self.last_fence_idx + 1) % self.ctx.images().len();
@@ -339,6 +340,8 @@ impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandl
                 Ok(())
             },
             Event::MainEventsCleared => {
+                // TODO: pass `delta` to on_update() and/or implement on_fixed_update()
+                self.render_handler.on_update(&self.ctx)?;
                 self.maybe_recreate_swapchain()?;
                 match swapchain::acquire_next_image(self.ctx.swapchain(), None).map_err(Validated::unwrap) {
                     Ok((image_idx, suboptimal, acquire_future)) => {
