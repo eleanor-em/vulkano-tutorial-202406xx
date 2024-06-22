@@ -171,7 +171,8 @@ fn create_swapchain(window: Arc<Window>,
                     device: Arc<Device>) -> Result<(Arc<Swapchain>, Vec<Arc<Image>>)> {
     let caps = physical_device.surface_capabilities(&surface, Default::default())?;
     let dimensions = window.inner_size();
-    let composite_alpha = caps.supported_composite_alpha.into_iter().next().unwrap();
+    let composite_alpha = caps.supported_composite_alpha.into_iter().next()
+        .context("vulkano: no composite alpha modes supported")?;
     let image_format =  physical_device
         .surface_formats(&surface, Default::default())?
         .first().context("vulkano: no surface formats found")?
@@ -180,10 +181,10 @@ fn create_swapchain(window: Arc<Window>,
         device.clone(),
         surface.clone(),
         SwapchainCreateInfo {
-            min_image_count: caps.min_image_count + 1, // How many buffers to use in the swapchain
+            min_image_count: caps.min_image_count + 1,
             image_format,
             image_extent: dimensions.into(),
-            image_usage: ImageUsage::COLOR_ATTACHMENT, // What the images are going to be used for
+            image_usage: ImageUsage::COLOR_ATTACHMENT,
             composite_alpha,
             ..Default::default()
         },
@@ -214,7 +215,7 @@ fn create_framebuffers(images: &[Arc<Image>],
                        render_pass: Arc<RenderPass>) -> Result<Vec<Arc<Framebuffer>>> {
     Ok(images.iter()
         .map(|image| {
-            let view = ImageView::new_default(image.clone()).unwrap();
+            let view = ImageView::new_default(image.clone())?;
             Framebuffer::new(
                 render_pass.clone(),
                 FramebufferCreateInfo {
