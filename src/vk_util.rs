@@ -228,6 +228,11 @@ pub trait RenderEventHandler {
     fn on_render(&mut self) ->  Result<Vec<Arc<PrimaryAutoCommandBuffer>>>;
 }
 
+type FenceFuture = FenceSignalFuture<PresentFuture<CommandBufferExecFuture<JoinFuture<
+    Box<dyn GpuFuture>,
+    SwapchainAcquireFuture>,
+>>>;
+
 pub struct WindowEventHandler<RenderHandler: RenderEventHandler> {
     window: Arc<Window>,
     ctx: VulkanoContext,
@@ -235,15 +240,9 @@ pub struct WindowEventHandler<RenderHandler: RenderEventHandler> {
 
     window_was_resized: bool,
     should_recreate_swapchain: bool,
-    // XXX: FenceSignalFuture is not Send + Sync, so Arc is cheating. However, there is no
-    // `impl GpuFuture for Rc<FenceSignalFuture<...>>`, so we can't use Rc. We don't use threads yet
-    // so this is safe anyway.
     fences: Vec<Option<Arc<FenceFuture>>>,
     last_fence_idx: u32,
 }
-
-type SwapchainFuturePair = JoinFuture<Box<dyn GpuFuture>, SwapchainAcquireFuture>;
-type FenceFuture = FenceSignalFuture<PresentFuture<CommandBufferExecFuture<SwapchainFuturePair>>>;
 impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandler> {
     pub fn new(window: Arc<Window>,
                ctx: VulkanoContext,
@@ -278,17 +277,14 @@ impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandl
         if let Some(image_fence) = &self.fences[image_idx as usize] {
             image_fence.wait(None)?;
         }
-        let previous_future = match self.fences[self.last_fence_idx as usize].clone() {
-            None => {
-                let mut now = vulkano::sync::now(self.ctx.device());
-                now.cleanup_finished();
-                now.boxed()
-            }
-            Some(fence) => fence.boxed(),
-        };
-
+        let next_future = self.fences[self.last_fence_idx as usize].clone()
+            .map(GpuFuture::boxed)
+            .unwrap_or(
+                // Synchronise only if there is no previous future (swapchain was just created).
+                vulkano::sync::now(self.ctx.device()).boxed())
+            .join(acquire_future);
         let command_buffers = self.render_handler.on_render()?;
-        self.fences[image_idx as usize] = previous_future.join(acquire_future)
+        self.fences[image_idx as usize] = next_future
             .then_execute(self.ctx.queue(), command_buffers[image_idx as usize].clone())?
             .then_swapchain_present(
                 self.ctx.queue(),
@@ -296,17 +292,15 @@ impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandl
             )
             .then_signal_fence_and_flush()
             .map_err(Validated::unwrap)
-            .map(|value| {
-                // XXX: why is this type so complicated, anyway?
-                Some(Arc::new(value))
-            })
+            .map(Arc::new).map(Some)
             .or_else(|e| match e {
-                VulkanError::OutOfDate => {
-                    self.should_recreate_swapchain = true;
-                    Ok(None)
-                },
+                VulkanError::OutOfDate => { self.should_recreate_swapchain = true; Ok(None) },
                 _ => Err(e),
             })?;
+        let expected_image_idx = (self.last_fence_idx + 1) % self.ctx.images().len() as u32;
+        if image_idx > 0 && image_idx != expected_image_idx {
+            info!("out-of-order framebuffer: {} -> {}", self.last_fence_idx, image_idx);
+        }
         self.last_fence_idx = image_idx;
         Ok(())
     }
