@@ -190,7 +190,8 @@ fn create_swapchain(window: Arc<Window>,
     )?)
 }
 
-fn create_render_pass(device: Arc<Device>, swapchain: Arc<Swapchain>) -> Result<Arc<RenderPass>> {
+fn create_render_pass(device: Arc<Device>,
+                      swapchain: Arc<Swapchain>) -> Result<Arc<RenderPass>> {
     Ok(vulkano::single_pass_renderpass!(
         device.clone(),
         attachments: {
@@ -209,7 +210,8 @@ fn create_render_pass(device: Arc<Device>, swapchain: Arc<Swapchain>) -> Result<
     )?)
 }
 
-fn create_framebuffers(images: &[Arc<Image>], render_pass: Arc<RenderPass>) -> Result<Vec<Arc<Framebuffer>>> {
+fn create_framebuffers(images: &[Arc<Image>],
+                       render_pass: Arc<RenderPass>) -> Result<Vec<Arc<Framebuffer>>> {
     Ok(images.iter()
         .map(|image| {
             let view = ImageView::new_default(image.clone()).unwrap();
@@ -225,7 +227,8 @@ fn create_framebuffers(images: &[Arc<Image>], render_pass: Arc<RenderPass>) -> R
 
 pub trait RenderEventHandler {
     fn on_resize(&mut self, ctx: &VulkanoContext, window: Arc<Window>) -> Result<()>;
-    fn on_render(&mut self) ->  Result<Vec<Arc<PrimaryAutoCommandBuffer>>>;
+    // TODO: find some way to genericise `PrimaryAutoCommandBuffer`. It gets weird fast.
+    fn on_render(&mut self) -> Result<Vec<Arc<PrimaryAutoCommandBuffer>>>;
 }
 
 type SwapchainJoinFuture = JoinFuture<
@@ -274,9 +277,9 @@ impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandl
         Ok(())
     }
 
-    fn acquire_and_synchronise(&self, image_idx: usize, acquire_future: SwapchainAcquireFuture)
+    fn acquire_and_synchronise(&mut self, image_idx: usize, acquire_future: SwapchainAcquireFuture)
             -> Result<SwapchainJoinFuture> {
-        if let Some(image_fence) = &self.fences[image_idx] {
+        if let Some(image_fence) = self.fences[image_idx].take() {
             image_fence.wait(None)?;
         }
         Ok(self.fences[self.last_fence_idx].clone()
@@ -287,9 +290,11 @@ impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandl
             .join(acquire_future))
     }
 
-    fn idle(&mut self, image_idx: usize, acquire_future: SwapchainAcquireFuture) -> Result<()> {
-        let command_buffers = self.render_handler.on_render()?;
-        self.fences[image_idx] = self.acquire_and_synchronise(image_idx, acquire_future)?
+    fn submit_command_buffers(&mut self,
+                              image_idx: usize,
+                              command_buffers: Vec<Arc<PrimaryAutoCommandBuffer>>,
+                              ready_future: SwapchainJoinFuture) -> Result<()> {
+        self.fences[image_idx] = ready_future
             .then_execute(self.ctx.queue(), command_buffers[image_idx].clone())?
             .then_swapchain_present(
                 self.ctx.queue(),
@@ -302,6 +307,14 @@ impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandl
                 VulkanError::OutOfDate => { self.should_recreate_swapchain = true; Ok(None) },
                 _ => Err(e),
             })?;
+        Ok(())
+    }
+
+    fn idle(&mut self, image_idx: usize, acquire_future: SwapchainAcquireFuture) -> Result<()> {
+        let ready_future = self.acquire_and_synchronise(image_idx, acquire_future)?;
+        let command_buffers = self.render_handler.on_render()?;
+        self.submit_command_buffers(image_idx, command_buffers, ready_future)?;
+
         let expected_image_idx = (self.last_fence_idx + 1) % self.ctx.images().len();
         if image_idx > 0 && image_idx != expected_image_idx {
             info!("out-of-order framebuffer: {} -> {}", self.last_fence_idx, image_idx);
