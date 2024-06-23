@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -16,7 +17,7 @@ use vulkano::pipeline::graphics::viewport::Viewport;
 use vulkano::render_pass::{Framebuffer, FramebufferCreateInfo, RenderPass};
 use vulkano::swapchain::{PresentFuture, Surface, Swapchain, SwapchainAcquireFuture, SwapchainCreateInfo, SwapchainPresentInfo};
 use vulkano::{swapchain, Validated, VulkanError, VulkanLibrary};
-use vulkano::command_buffer::{CommandBufferExecFuture, PrimaryAutoCommandBuffer};
+use vulkano::command_buffer::{CommandBufferExecFuture, PrimaryCommandBufferAbstract};
 use vulkano::sync::future::{FenceSignalFuture, JoinFuture};
 use vulkano::sync::GpuFuture;
 use winit::event::{Event, WindowEvent};
@@ -226,11 +227,10 @@ fn create_framebuffers(images: &[Arc<Image>],
         }).try_collect()?)
 }
 
-pub trait RenderEventHandler {
+pub trait RenderEventHandler<CommandBuffer: PrimaryCommandBufferAbstract> {
     fn on_resize(&mut self, ctx: &VulkanoContext, window: Arc<Window>) -> Result<()>;
     fn on_update(&mut self, ctx: &VulkanoContext) -> Result<()>;
-    // TODO: find some way to genericise `PrimaryAutoCommandBuffer`. It gets weird fast.
-    fn on_render(&mut self, ctx: &VulkanoContext) -> Result<Vec<Arc<PrimaryAutoCommandBuffer>>>;
+    fn on_render(&mut self, ctx: &VulkanoContext) -> Result<Vec<Arc<CommandBuffer>>>;
 }
 
 type SwapchainJoinFuture = JoinFuture<
@@ -239,7 +239,7 @@ type SwapchainJoinFuture = JoinFuture<
 >;
 type FenceFuture = FenceSignalFuture<PresentFuture<CommandBufferExecFuture<SwapchainJoinFuture>>>;
 
-pub struct WindowEventHandler<RenderHandler: RenderEventHandler> {
+pub struct WindowEventHandler<CommandBuffer: PrimaryCommandBufferAbstract, RenderHandler: RenderEventHandler<CommandBuffer> + 'static> {
     window: Arc<Window>,
     ctx: VulkanoContext,
     render_handler: RenderHandler,
@@ -248,8 +248,9 @@ pub struct WindowEventHandler<RenderHandler: RenderEventHandler> {
     should_recreate_swapchain: bool,
     fences: Vec<Option<Arc<FenceFuture>>>,
     last_fence_idx: usize,
+    command_buffer_type: PhantomData<CommandBuffer>,
 }
-impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandler> {
+impl<CommandBuffer: PrimaryCommandBufferAbstract + 'static, RenderHandler: RenderEventHandler<CommandBuffer> + 'static> WindowEventHandler<CommandBuffer, RenderHandler> {
     pub fn new(window: Arc<Window>,
                ctx: VulkanoContext,
                handler: RenderHandler) -> Self {
@@ -259,6 +260,7 @@ impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandl
             render_handler: handler,
             window_was_resized: false, should_recreate_swapchain: false,
             fences: vec![None; frames_in_flight], last_fence_idx: 0,
+            command_buffer_type: PhantomData,
         }
     }
 
@@ -294,7 +296,7 @@ impl<RenderHandler: RenderEventHandler + 'static> WindowEventHandler<RenderHandl
 
     fn submit_command_buffers(&mut self,
                               image_idx: usize,
-                              command_buffers: Vec<Arc<PrimaryAutoCommandBuffer>>,
+                              command_buffers: Vec<Arc<CommandBuffer>>,
                               ready_future: SwapchainJoinFuture) -> Result<()> {
         self.fences[image_idx] = ready_future
             .then_execute(self.ctx.queue(), command_buffers[image_idx].clone())?

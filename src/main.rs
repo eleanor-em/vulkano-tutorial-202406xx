@@ -134,7 +134,7 @@ impl S7Handler {
         Ok(())
     }
 }
-impl vk_util::RenderEventHandler for S7Handler {
+impl vk_util::RenderEventHandler<PrimaryAutoCommandBuffer> for S7Handler {
     fn on_resize(&mut self, ctx: &VulkanoContext, window: Arc<Window>) -> Result<()> {
         self.viewport.extent = window.inner_size().into();
         self.recreate_command_buffers(ctx)?;
