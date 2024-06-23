@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# core
+num-traits = "0.2.19"
 # utilities
 anyhow = "1.0.86"
 tracing = "0.1.40"

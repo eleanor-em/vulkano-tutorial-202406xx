@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 use anyhow::{Context, Result};
+use num_traits::{Float, One};
 
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, RenderPassBeginInfo, SubpassBeginInfo, SubpassContents, SubpassEndInfo};
@@ -18,9 +19,11 @@ use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
 use vulkano::render_pass::Subpass;
 use vulkano::shader::ShaderModule;
 use winit::window::Window;
+use linalg::{Mat3x3, Vec2};
 
 mod vk_util;
 mod vk_test;
+mod linalg;
 
 use vk_util::VulkanoContext;
 
@@ -100,8 +103,20 @@ fn s7_windowing(window_ctx: vk_util::WindowContext, ctx: vk_util::VulkanoContext
         .and_then(|pipeline| s7_create_command_buffers(&ctx, pipeline, &vertex_buffer))?;
     let handler = S7Handler::new(vs, fs, vertex_buffer, viewport, command_buffers);
 
+    // TODO: proper test cases...
+    let a = Vec2 { x: 1.0, y: 1.0 };
+    assert!((a * 2.0).almost_eq(Vec2 { x: 2.0, y: 2.0 }));
+    assert!((2.0 * a).almost_eq(Vec2 { x: 2.0, y: 2.0 }));
+    assert!(f64::abs((a * 2.0 - a).x - 1.0) < f64::epsilon());
+    assert!(f64::abs((a * 2.0 - a).y - 1.0) < f64::epsilon());
+    assert!((Mat3x3::rotation(-1.0)
+        * Mat3x3::rotation(0.5)
+        * Mat3x3::rotation(0.5)).almost_eq(Mat3x3::one()));
+
     let (event_loop, window) = window_ctx.consume();
     vk_util::WindowEventHandler::new(window, ctx, handler).run(event_loop);
+
+
     Ok(())
 }
 
@@ -143,12 +158,22 @@ impl vk_util::RenderEventHandler<PrimaryAutoCommandBuffer> for S7Handler {
 
     fn on_update(&mut self, ctx: &vk_util::VulkanoContext) -> Result<()> {
         self.t = (self.t + 1) % 62831853;
-        let arc = f32::sin(self.t as f32 / PERIOD);
-        const PERIOD: f32 = 100.0;
+        const PERIOD: f64 = 70.0;
+        let radians = self.t as f64 / PERIOD;
+        // TODO: impl From<[f32; 2]> for Vec2
+        let mut top_left_vec: Vec2 = self.top_left.into();
+        let mut bottom_right_vec = Vec2 { x: top_left_vec.x + 0.5, y: top_left_vec.y + 0.5 };
+        let mut bottom_left_vec = Vec2 { x: top_left_vec.x, y: top_left_vec.y + 0.5 };
+        let transform = Mat3x3::translation_vec2(-bottom_right_vec) *
+            Mat3x3::rotation(-radians) *
+            Mat3x3::translation_vec2(bottom_right_vec);
+        top_left_vec *= transform;
+        bottom_right_vec *= transform;
+        bottom_left_vec *= transform;
         let next_vertices = [
-            S7Vertex { position: [self.top_left[0] + arc, self.top_left[1] + arc] },
-            S7Vertex { position: [self.top_left[0] + 0.5 - arc, self.top_left[1] + 1.0 + arc] },
-            S7Vertex { position: [self.top_left[0] + 1.0 - arc, self.top_left[1] + 0.25 + arc] },
+            S7Vertex { position: top_left_vec.into() },
+            S7Vertex { position: bottom_right_vec.into() },
+            S7Vertex { position: bottom_left_vec.into() },
         ];
         self.vertex_buffer = Buffer::from_iter(
             ctx.memory_allocator(),
